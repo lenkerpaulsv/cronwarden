@@ -1,54 +1,60 @@
-"""Data models for cronwarden cron job entries."""
+"""Domain models for cronwarden."""
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from cronwarden.parser import CronExpression
+
 
 @dataclass
 class CronJob:
-    """Represents a single cron job entry from a server."""
-    server: str
-    user: str
     schedule: str
     command: str
-    source_file: str
-    line_number: int
-    is_valid: bool = True
-    validation_error: Optional[str] = None
+    server: str
+    expression: CronExpression
+    comment: str = ""
+    tags: List[str] = field(default_factory=list)
 
     @property
     def identifier(self) -> str:
-        """Unique identifier for deduplication and conflict detection."""
-        return f"{self.server}:{self.user}:{self.schedule}:{self.command}"
+        """Unique-ish key: server + schedule + command."""
+        return f"{self.server}::{self.schedule}::{self.command}"
 
     def __str__(self) -> str:
-        status = "OK" if self.is_valid else f"INVALID({self.validation_error})"
-        return f"[{self.server}] {self.user}: {self.schedule} {self.command} [{status}]"
+        return f"[{self.server}] {self.schedule} {self.command}"
+
+    def __hash__(self) -> int:
+        return hash(self.identifier)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CronJob):
+            return NotImplemented
+        return self.identifier == other.identifier
 
 
 @dataclass
 class CronAuditResult:
-    """Aggregated result of auditing cron jobs across servers."""
-    server: str
-    source_file: str
-    jobs: List[CronJob] = field(default_factory=list)
-    parse_errors: List[str] = field(default_factory=list)
+    job: CronJob
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
     @property
-    def valid_jobs(self) -> List[CronJob]:
-        return [j for j in self.jobs if j.is_valid]
+    def valid_jobs(self) -> bool:
+        return len(self.errors) == 0
 
     @property
-    def invalid_jobs(self) -> List[CronJob]:
-        return [j for j in self.jobs if not j.is_valid]
+    def has_warnings(self) -> bool:
+        return len(self.warnings) > 0
 
     @property
-    def total(self) -> int:
-        return len(self.jobs)
+    def has_errors(self) -> bool:
+        return len(self.errors) > 0
 
-    def summary(self) -> str:
-        return (
-            f"Server: {self.server} | File: {self.source_file} | "
-            f"Total: {self.total} | Valid: {len(self.valid_jobs)} | "
-            f"Invalid: {len(self.invalid_jobs)} | ParseErrors: {len(self.parse_errors)}"
-        )
+    @property
+    def is_clean(self) -> bool:
+        return not self.has_errors and not self.has_warnings
+
+    def __str__(self) -> str:
+        status = "OK" if self.valid_jobs else "INVALID"
+        return f"{status}: {self.job}"
